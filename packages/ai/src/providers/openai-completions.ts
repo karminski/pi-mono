@@ -12,6 +12,7 @@ import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost, supportsXhigh } from "../models.js";
 import type {
 	AssistantMessage,
+	AudioContent,
 	Context,
 	Message,
 	Model,
@@ -95,8 +96,56 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			stream.push({ type: "start", partial: output });
 
 			let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;
+			/** Index of an audio block that has received `audio_start` but not yet `audio_end`. */
+			let openAudioContentIndex: number | null = null;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
+
+			const appendAudioDelta = (raw: { id?: string; data?: string; transcript?: string }) => {
+				const data = raw.data;
+				if (typeof data !== "string" || data.length === 0) {
+					return;
+				}
+				const last = output.content[output.content.length - 1];
+				const lastAudio = last?.type === "audio" ? (last as AudioContent) : undefined;
+				const id = raw.id;
+				const needNewBlock =
+					!lastAudio ||
+					(id !== undefined && id.length > 0 && lastAudio.streamId !== undefined && id !== lastAudio.streamId);
+
+				if (needNewBlock) {
+					if (openAudioContentIndex !== null) {
+						stream.push({
+							type: "audio_end",
+							contentIndex: openAudioContentIndex,
+							partial: output,
+						});
+						openAudioContentIndex = null;
+					}
+					const block: AudioContent = { type: "audio", fragments: [] };
+					if (id !== undefined && id.length > 0) {
+						block.streamId = id;
+					}
+					output.content.push(block);
+					const idx = blockIndex();
+					openAudioContentIndex = idx;
+					stream.push({ type: "audio_start", contentIndex: idx, partial: output });
+				}
+
+				const block = output.content[output.content.length - 1] as AudioContent;
+				block.fragments.push(data);
+				const t = raw.transcript;
+				if (typeof t === "string" && t.length > 0) {
+					block.transcript = (block.transcript ?? "") + t;
+				}
+				stream.push({
+					type: "audio_delta",
+					contentIndex: blockIndex(),
+					delta: data,
+					transcriptDelta: typeof t === "string" && t.length > 0 ? t : undefined,
+					partial: output,
+				});
+			};
 			const finishCurrentBlock = (block?: typeof currentBlock) => {
 				if (block) {
 					if (block.type === "text") {
@@ -271,7 +320,25 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 							}
 						}
 					}
+
+					const audioDelta = (choice.delta as any).audio;
+					if (audioDelta && typeof audioDelta === "object") {
+						appendAudioDelta({
+							id: typeof audioDelta.id === "string" ? audioDelta.id : undefined,
+							data: typeof audioDelta.data === "string" ? audioDelta.data : undefined,
+							transcript: typeof audioDelta.transcript === "string" ? audioDelta.transcript : undefined,
+						});
+					}
 				}
+			}
+
+			if (openAudioContentIndex !== null) {
+				stream.push({
+					type: "audio_end",
+					contentIndex: openAudioContentIndex,
+					partial: output,
+				});
+				openAudioContentIndex = null;
 			}
 
 			finishCurrentBlock(currentBlock);

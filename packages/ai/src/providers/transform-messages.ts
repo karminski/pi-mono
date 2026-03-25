@@ -64,6 +64,11 @@ export function transformMessages<TApi extends Api>(
 					};
 				}
 
+				if (block.type === "audio") {
+					// Assistant audio is not representable in chat-completions history; drop on replay.
+					return [];
+				}
+
 				if (block.type === "toolCall") {
 					const toolCall = block as ToolCall;
 					let normalizedToolCall: ToolCall = toolCall;

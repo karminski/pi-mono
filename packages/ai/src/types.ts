@@ -156,6 +156,20 @@ export interface ImageContent {
 	mimeType: string; // e.g., "image/jpeg", "image/png"
 }
 
+/**
+ * Streaming audio from OpenAI-compatible multimodal completions (e.g. Qwen Omni).
+ * Each fragment is a base64 payload (often PCM); consumers should decode and
+ * concatenate decoded bytes in order.
+ */
+export interface AudioContent {
+	type: "audio";
+	fragments: string[];
+	/** Optional rolling transcript (e.g. provider `delta.audio.transcript`) */
+	transcript?: string;
+	/** Provider audio stream/item id when present */
+	streamId?: string;
+}
+
 export interface ToolCall {
 	type: "toolCall";
 	id: string;
@@ -189,7 +203,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | AudioContent)[];
 	api: Api;
 	provider: Provider;
 	model: string;
@@ -245,6 +259,15 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
+	| { type: "audio_start"; contentIndex: number; partial: AssistantMessage }
+	| {
+			type: "audio_delta";
+			contentIndex: number;
+			delta: string;
+			transcriptDelta?: string;
+			partial: AssistantMessage;
+	  }
+	| { type: "audio_end"; contentIndex: number; partial: AssistantMessage }
 	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse">; message: AssistantMessage }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
 
